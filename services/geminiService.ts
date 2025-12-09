@@ -112,8 +112,8 @@ export const fetchNewsFromAgent = async (topic: string = "latest news"): Promise
     // Attach Source URLs from grounding metadata
     const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
     const validLinks = groundingChunks
-      .map(chunk => chunk.web?.uri)
-      .filter((uri): uri is string => !!uri);
+      .map((chunk: any) => chunk.web?.uri)
+      .filter((uri: any): uri is string => !!uri);
 
     return articles.map((article, index) => {
         const url = validLinks[index % validLinks.length]; // Distribute links
@@ -163,7 +163,7 @@ export const fetchDeepResearch = async (topic: string): Promise<NewsArticle[]> =
     let articles = Array.isArray(data) ? data : (data?.articles || []);
 
     const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
-    const validLinks = groundingChunks.map(c => c.web?.uri).filter(u => !!u);
+    const validLinks = groundingChunks.map((c: any) => c.web?.uri).filter((u: any) => !!u);
 
     return articles.map((a: any, i: number) => ({
         ...a,
