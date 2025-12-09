@@ -1,140 +1,84 @@
 import { GoogleGenAI, Modality } from "@google/genai";
 import { NewsArticle } from "../types";
 
-// Helper to lazy load AI client to avoid top-level side effects
+// Lazy load AI client
 let aiClient: GoogleGenAI | null = null;
 const getAi = (): GoogleGenAI => {
   if (!aiClient) {
-    // Check if process is defined to avoid crashes in strict browser environments, 
-    // though the environment should inject it.
-    const apiKey = typeof process !== 'undefined' ? process.env.API_KEY : undefined;
-    if (!apiKey) {
-        console.warn("API Key might be missing or process.env is undefined.");
+    // Safety check for process.env in browser environments
+    // In many build tools, process.env.API_KEY is replaced by a string literal.
+    // If process is undefined at runtime, we fallback safely.
+    let apiKey = "";
+    try {
+        apiKey = process.env.API_KEY as string;
+    } catch (e) {
+        console.warn("process.env.API_KEY access failed, attempting fallback or assuming injection.");
     }
-    aiClient = new GoogleGenAI({ apiKey: apiKey as string });
+    
+    if (!apiKey) {
+        console.error("API Key is missing.");
+    }
+    aiClient = new GoogleGenAI({ apiKey });
   }
   return aiClient;
 };
 
-// Helper to parse the text response looking for a JSON block (Array or Object)
+// Robust JSON extraction from LLM text response
 const extractJson = (text: string): any => {
   if (!text) return null;
-  
-  let cleanedText = text.trim();
-  
-  // Pre-cleaning: remove markdown code blocks
-  const codeBlockMatch = cleanedText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-  if (codeBlockMatch && codeBlockMatch[1]) {
-    cleanedText = codeBlockMatch[1].trim();
-  } else {
-    // Sometimes it just says "json" without ticks at start
-    cleanedText = cleanedText.replace(/^json\s*/i, '');
-  }
+  let cleaned = text.trim();
 
-  // 1. Try direct parse
+  // Remove markdown code blocks ```json ... ```
+  cleaned = cleaned.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+
+  // Attempt 1: Direct Parse
   try {
-      return JSON.parse(cleanedText);
+    return JSON.parse(cleaned);
   } catch (e) {}
 
-  // 2. Try to find the widest bracket pair [] (Array)
-  const firstOpenBracket = cleanedText.indexOf('[');
-  const lastCloseBracket = cleanedText.lastIndexOf(']');
-  
-  if (firstOpenBracket !== -1 && lastCloseBracket !== -1 && lastCloseBracket > firstOpenBracket) {
-      const potentialJson = cleanedText.substring(firstOpenBracket, lastCloseBracket + 1);
-      try {
-          return JSON.parse(potentialJson);
-      } catch (e) {}
-  }
-  
-  // 3. Fallback: Sequential object extraction
-  const objects: any[] = [];
-  let startIndex = cleanedText.indexOf('{');
-  
-  // Safety limiter
-  let loopCount = 0;
-  
-  while (startIndex !== -1 && loopCount < 50) {
-      loopCount++;
-      let balance = 1;
-      let endIndex = startIndex + 1;
-      let inString = false;
-      let escape = false;
-
-      while (endIndex < cleanedText.length && balance > 0) {
-          const char = cleanedText[endIndex];
-          if (escape) {
-              escape = false;
-          } else if (char === '\\') {
-              escape = true;
-          } else if (char === '"') {
-              inString = !inString;
-          } else if (!inString) {
-              if (char === '{') balance++;
-              else if (char === '}') balance--;
-          }
-          endIndex++;
-      }
-
-      if (balance === 0) {
-          const jsonStr = cleanedText.substring(startIndex, endIndex);
-          try {
-              const obj = JSON.parse(jsonStr);
-              if (obj && typeof obj === 'object') {
-                   objects.push(obj);
-              }
-          } catch (e) {
-              // Ignore invalid objects
-          }
-          startIndex = cleanedText.indexOf('{', endIndex);
-      } else {
-          break; // Stop if structure is broken
-      }
+  // Attempt 2: Extract Array [...]
+  const firstOpen = cleaned.indexOf("[");
+  const lastClose = cleaned.lastIndexOf("]");
+  if (firstOpen !== -1 && lastClose !== -1 && lastClose > firstOpen) {
+    try {
+      return JSON.parse(cleaned.substring(firstOpen, lastClose + 1));
+    } catch (e) {}
   }
 
-  if (objects.length > 0) return objects;
+  // Attempt 3: Extract Object {...}
+  const firstOpenObj = cleaned.indexOf("{");
+  const lastCloseObj = cleaned.lastIndexOf("}");
+  if (firstOpenObj !== -1 && lastCloseObj !== -1 && lastCloseObj > firstOpenObj) {
+    try {
+      return JSON.parse(cleaned.substring(firstOpenObj, lastCloseObj + 1));
+    } catch (e) {}
+  }
 
-  console.error("Failed to parse JSON from Gemini response.");
   return null;
 };
 
-// --- Standard News Search (Flash) ---
+// --- Standard News Search ---
 export const fetchNewsFromAgent = async (topic: string = "latest news"): Promise<NewsArticle[]> => {
   try {
     const prompt = `
-      You are a news aggregator. 
-      Task: Fetch comprehensive news coverage on: "${topic}".
+      You are a professional news aggregator API.
+      Task: Fetch 6-10 real news articles about: "${topic}".
       
-      REQUIRED: You must find at least 2 articles for EACH of the following categories if they are relevant to the topic or generally trending:
-      - Politics (Israel & World)
-      - Economy
-      - Technology
-      - Sports
-      - Health
-      - Entertainment
-      - Science
+      Requirements:
+      - Articles must be real and current (use Google Search).
+      - Cover diverse categories: Politics, Economy, Technology, Sports, World.
+      - Output strictly valid JSON array.
+      - Titles and Summaries must be in Hebrew.
       
-      Output Rules:
-      1. Return ONLY a raw JSON array.
-      2. RFC8259 compliant JSON.
-      3. All keys MUST be double-quoted (e.g. "title", not title).
-      4. All string values MUST be double-quoted. 
-      5. CRITICAL: Escape all double quotes inside strings (e.g. "She said \\"Hello\\"").
-      6. CRITICAL: Escape all newlines inside strings (use \\n).
-      7. No trailing commas.
-      8. No markdown formatting.
-      
-      JSON Structure:
+      JSON Schema:
       [
         {
           "title": "Hebrew Headline",
-          "summary": "Short summary in Hebrew",
+          "summary": "Brief Hebrew summary (2 sentences)",
           "category": "Politics|Technology|Sports|Economy|Health|Entertainment|Science|World|General",
-          "publishedAt": "e.g. 'Just now'"
+          "publishedAt": "Time ago (e.g. 'לפני שעה')"
         }
       ]
-      
-      Fetch at least 10 items total.
     `;
 
     const response = await getAi().models.generateContent({
@@ -146,76 +90,57 @@ export const fetchNewsFromAgent = async (topic: string = "latest news"): Promise
     });
 
     const text = response.text || "";
-    const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+    let data = extractJson(text);
     
-    let articles: any = extractJson(text);
-
-    // Normalize result to array
-    if (!articles || !Array.isArray(articles)) {
-        if (articles && (articles as any).news) articles = (articles as any).news;
-        else if (articles && (articles as any).articles) articles = (articles as any).articles;
-        else {
-             return [{
-                title: "שגיאה בטעינת הנתונים",
-                summary: "המודל החזיר תשובה שאינה תקינה. אנא נסה שוב או נסח את החיפוש מחדש.",
-                category: "General",
-                publishedAt: "עכשיו"
-            }];
-        }
+    // Normalize data structure
+    let articles: any[] = [];
+    if (Array.isArray(data)) {
+        articles = data;
+    } else if (data && typeof data === 'object') {
+        if (Array.isArray(data.news)) articles = data.news;
+        else if (Array.isArray(data.articles)) articles = data.articles;
+        else articles = [data];
     }
 
+    // Attach Source URLs from grounding metadata
+    const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
     const validLinks = groundingChunks
       .map(chunk => chunk.web?.uri)
       .filter((uri): uri is string => !!uri);
 
-    return (articles as NewsArticle[]).map((article, index) => {
-      const linkIndex = index < validLinks.length ? index : -1; 
-      const url = linkIndex >= 0 ? validLinks[linkIndex] : undefined;
-      
-      return {
-        ...article,
-        sourceUrl: url,
-        sourceName: url ? new URL(url).hostname.replace('www.', '') : "מקור ברשת"
-      };
+    return articles.map((article, index) => {
+        const url = validLinks[index % validLinks.length]; // Distribute links
+        return {
+            title: article.title || "ללא כותרת",
+            summary: article.summary || "",
+            category: article.category || "General",
+            publishedAt: article.publishedAt || "לאחרונה",
+            sourceUrl: url,
+            sourceName: url ? new URL(url).hostname.replace('www.', '') : undefined
+        };
     });
 
   } catch (error) {
     console.error("Gemini API Error:", error);
     return [{
-        title: "שגיאה בתקשורת",
-        summary: "לא ניתן היה ליצור קשר עם השרת. אנא בדוק את החיבור שלך.",
+        title: "שגיאה בטעינת החדשות",
+        summary: "אנא נסה שוב מאוחר יותר.",
         category: "General",
         publishedAt: "עכשיו"
     }];
   }
 };
 
-// --- Deep Research (Gemini 3 Pro + Thinking) ---
+// --- Deep Research ---
 export const fetchDeepResearch = async (topic: string): Promise<NewsArticle[]> => {
   try {
     const prompt = `
-      Perform a DEEP RESEARCH analysis on the topic: "${topic}".
+      Perform deep analysis on: "${topic}".
+      Return a JSON array of 3 detailed insight articles in Hebrew.
+      Use Google Search for facts.
       
-      Use your thinking capabilities to analyze trends, causes, and effects.
-      Output the result as a STRICT JSON array containing 3-5 highly detailed "Feature Articles".
-      
-      CRITICAL OUTPUT RULES:
-      1. Return ONLY a raw JSON array.
-      2. RFC8259 compliant JSON.
-      3. All keys MUST be double-quoted.
-      4. Escape all double quotes inside strings (e.g. "Text \\"Quote\\"").
-      5. Escape all newlines inside strings (use \\n).
-      6. No trailing commas.
-      
-      Structure:
-      [
-        {
-          "title": "Insightful Hebrew Headline",
-          "summary": "Detailed analysis in Hebrew (50-70 words). Explain the 'Why' and 'How'.",
-          "category": "General", 
-          "publishedAt": "Deep Dive"
-        }
-      ]
+      JSON Format:
+      [{"title": "...", "summary": "...", "category": "General", "publishedAt": "Deep Dive"}]
     `;
 
     const response = await getAi().models.generateContent({
@@ -227,25 +152,13 @@ export const fetchDeepResearch = async (topic: string): Promise<NewsArticle[]> =
       },
     });
 
-    let articles: any = extractJson(response.text || "");
-    
-    if (!articles || !Array.isArray(articles)) {
-        if (articles && (articles as any).news) articles = (articles as any).news;
-        else if (articles && (articles as any).articles) articles = (articles as any).articles;
-        else {
-            return [{
-                title: "ניתוח לא זמין",
-                summary: "לא ניתן היה לעבד את תוצאות המחקר. אנא נסה שוב.",
-                category: "General",
-                publishedAt: "עכשיו"
-            }];
-        }
-    }
-    
-    const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
-    const validLinks = groundingChunks.map(chunk => chunk.web?.uri).filter(u => !!u);
+    let data = extractJson(response.text || "");
+    let articles = Array.isArray(data) ? data : (data?.articles || []);
 
-    return (articles as NewsArticle[]).map((a, i) => ({
+    const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+    const validLinks = groundingChunks.map(c => c.web?.uri).filter(u => !!u);
+
+    return articles.map((a: any, i: number) => ({
         ...a,
         sourceUrl: validLinks[i % validLinks.length],
         sourceName: "Gemini 3 Pro Analysis"
@@ -254,15 +167,15 @@ export const fetchDeepResearch = async (topic: string): Promise<NewsArticle[]> =
   } catch (error) {
     console.error("Deep Research Error:", error);
     return [{
-        title: "שגיאה בניתוח מעמיק",
-        summary: "המודל נתקל בבעיה בעת ביצוע חשיבה עמוקה. אנא נסה שוב.",
+        title: "שגיאה בניתוח",
+        summary: "המודל נתקל בבעיה.",
         category: "General",
         publishedAt: "עכשיו"
     }];
   }
 };
 
-// --- Image Analysis (Gemini 3 Pro Multimodal) ---
+// --- Image Analysis ---
 export const analyzeImage = async (base64Image: string, mimeType: string): Promise<NewsArticle> => {
     try {
         const response = await getAi().models.generateContent({
@@ -270,57 +183,34 @@ export const analyzeImage = async (base64Image: string, mimeType: string): Promi
             contents: {
                 parts: [
                     { inlineData: { mimeType, data: base64Image } },
-                    { text: "Analyze this image in the context of news. What is happening? Who is in it? What does the chart show? Return a VALID JSON object with: { \"title\": \"Hebrew Headline\", \"summary\": \"Detailed description in Hebrew\", \"category\": \"General\" }" }
+                    { text: "Analyze this image for news context. JSON Output: { \"title\": \"Hebrew Headline\", \"summary\": \"Hebrew Description\", \"category\": \"General\" }" }
                 ]
-            },
-            config: {
-                responseMimeType: "application/json"
             }
         });
 
-        const text = response.text || "{}";
-        let data: any = extractJson(text);
-        
-        if (Array.isArray(data)) {
-            data = data[0];
-        }
-
-        if (data) {
-            return {
-                title: data.title || "ניתוח תמונה",
-                summary: data.summary || text.substring(0, 100),
-                category: data.category || "General",
-                publishedAt: "זה עתה נסרק",
-                sourceName: "Image Analysis"
-            };
-        }
-        
+        const data = extractJson(response.text || "") || {};
         return {
-            title: "ניתוח תמונה",
-            summary: "לא ניתן היה לפענח את התמונה.",
-            category: "General",
-            publishedAt: "זה עתה נסרק"
+            title: data.title || "ניתוח תמונה",
+            summary: data.summary || "לא ניתן היה לפענח את התמונה.",
+            category: data.category || "General",
+            publishedAt: "עכשיו",
+            sourceName: "Image Analysis"
         };
-
     } catch (error) {
-        console.error("Image Analysis Error:", error);
+        console.error("Image Error:", error);
         throw error;
     }
 };
 
-// --- Text to Speech (Gemini 2.5 Flash TTS) ---
+// --- Text to Speech ---
 export const generateSpeech = async (text: string): Promise<ArrayBuffer | null> => {
     try {
         const response = await getAi().models.generateContent({
             model: "gemini-2.5-flash-preview-tts",
-            contents: [{ parts: [{ text: text }] }],
+            contents: [{ parts: [{ text: text.substring(0, 300) }] }], // Limit length for speed
             config: {
                 responseModalities: [Modality.AUDIO],
-                speechConfig: {
-                    voiceConfig: {
-                        prebuiltVoiceConfig: { voiceName: 'Kore' }, 
-                    },
-                },
+                speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } },
             },
         });
 
@@ -328,13 +218,11 @@ export const generateSpeech = async (text: string): Promise<ArrayBuffer | null> 
         if (!base64Audio) return null;
 
         const binaryString = atob(base64Audio);
-        const len = binaryString.length;
-        const bytes = new Uint8Array(len);
-        for (let i = 0; i < len; i++) {
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
             bytes[i] = binaryString.charCodeAt(i);
         }
         return bytes.buffer;
-
     } catch (error) {
         console.error("TTS Error:", error);
         return null;
