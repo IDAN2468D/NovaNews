@@ -26,30 +26,30 @@ const App: React.FC = () => {
   const [currentTopic, setCurrentTopic] = useState("החדשות הכי חשובות בישראל ובעולם מהשעות האחרונות");
 
   useEffect(() => {
-    const savedHistory = localStorage.getItem('novaNewsHistory');
-    if (savedHistory) {
-      try {
-        const parsed = JSON.parse(savedHistory);
-        if (Array.isArray(parsed)) setSearchHistory(parsed);
-      } catch (e) {
-        setSearchHistory([]);
-      }
-    }
+    // Safe localStorage access
+    try {
+        const savedHistory = localStorage.getItem('novaNewsHistory');
+        if (savedHistory) {
+          const parsed = JSON.parse(savedHistory);
+          if (Array.isArray(parsed)) setSearchHistory(parsed);
+        }
 
-    const savedFocus = localStorage.getItem('novaFocusMode');
-    if (savedFocus === 'true') setFocusMode(true);
+        const savedFocus = localStorage.getItem('novaFocusMode');
+        if (savedFocus === 'true') setFocusMode(true);
+    } catch (e) {
+        console.warn("LocalStorage access failed", e);
+    }
     
     if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
       setDarkMode(true);
     }
     
-    updateNews(currentTopic, false);
+    // Initial fetch
+    updateNews("החדשות הכי חשובות בישראל ובעולם מהשעות האחרונות", false);
     
     const handleScroll = () => {
-      // Show/Hide Scroll to top
       setShowScrollTop(window.scrollY > 400);
 
-      // Scroll Progress
       const totalScroll = document.documentElement.scrollTop;
       const windowHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;
       if (windowHeight > 0) {
@@ -59,7 +59,7 @@ const App: React.FC = () => {
 
     window.addEventListener('scroll', handleScroll);
     return () => window.removeEventListener('scroll', handleScroll);
-  }, []);
+  }, []); // Remove dependencies to ensure it only runs once on mount
 
   useEffect(() => {
     if (darkMode) document.documentElement.classList.add('dark');
@@ -69,7 +69,9 @@ const App: React.FC = () => {
   const toggleFocusMode = () => {
       const newValue = !focusMode;
       setFocusMode(newValue);
-      localStorage.setItem('novaFocusMode', String(newValue));
+      try {
+        localStorage.setItem('novaFocusMode', String(newValue));
+      } catch (e) {}
   };
 
   useEffect(() => {
@@ -87,6 +89,7 @@ const App: React.FC = () => {
   }, [selectedCategory, articles, focusMode]);
 
   const updateNews = useCallback(async (topic: string, isDeepSearch: boolean = false) => {
+    // Avoid race conditions or updates if unmounted (though functional components handle this via closure usually, strict mode can double invoke)
     setCurrentTopic(topic);
     setAgentState(prev => ({
       ...prev,
@@ -96,12 +99,15 @@ const App: React.FC = () => {
         : `סורק את הרשת אחר חדשות בנושא: ${topic}...`
     }));
     setError(null);
+    
     if (!focusMode) setSelectedCategory('All');
 
     if (topic && !topic.startsWith("Image Analysis")) {
         setSearchHistory(prev => {
-            const newHistory = [topic, ...prev].slice(0, 50); 
-            localStorage.setItem('novaNewsHistory', JSON.stringify(newHistory));
+            const newHistory = [topic, ...prev].filter(t => t !== "Image Analysis").slice(0, 50); 
+            try {
+                localStorage.setItem('novaNewsHistory', JSON.stringify(newHistory));
+            } catch (e) {}
             return newHistory;
         });
     }
@@ -119,7 +125,7 @@ const App: React.FC = () => {
       });
     } catch (err) {
       console.error(err);
-      setError("אירעה שגיאה. אנא נסה שוב.");
+      setError("אירעה שגיאה בטעינת החדשות. אנא נסה שוב.");
       setAgentState(prev => ({ ...prev, isScanning: false }));
     }
   }, [focusMode]);
@@ -129,10 +135,12 @@ const App: React.FC = () => {
     try {
         const reader = new FileReader();
         reader.onloadend = async () => {
-            const base64Data = (reader.result as string).split(',')[1];
-            const article = await analyzeImage(base64Data, file.type);
-            setArticles(prev => [article, ...prev]);
-            setAgentState({ isScanning: false, lastUpdated: new Date(), statusMessage: "הושלם." });
+            if (typeof reader.result === 'string') {
+                const base64Data = reader.result.split(',')[1];
+                const article = await analyzeImage(base64Data, file.type);
+                setArticles(prev => [article, ...prev]);
+                setAgentState({ isScanning: false, lastUpdated: new Date(), statusMessage: "הושלם." });
+            }
         };
         reader.readAsDataURL(file);
     } catch (e) {
@@ -155,7 +163,10 @@ const App: React.FC = () => {
 
   const toggleDarkMode = () => setDarkMode(!darkMode);
   const toggleAutoRefresh = () => setIsAutoRefresh(!isAutoRefresh);
-  const clearHistory = () => { setSearchHistory([]); localStorage.removeItem('novaNewsHistory'); };
+  const clearHistory = () => { 
+      setSearchHistory([]); 
+      try { localStorage.removeItem('novaNewsHistory'); } catch(e) {} 
+  };
   const scrollToTop = () => window.scrollTo({ top: 0, behavior: 'smooth' });
 
   const categories: (Category | 'All')[] = ['All', 'Politics', 'Technology', 'Economy', 'Sports', 'Health', 'Entertainment', 'Science', 'World', 'General'];
@@ -226,7 +237,7 @@ const App: React.FC = () => {
               agentState={agentState} 
               onUpdate={updateNews} 
               onImageUpload={handleImageUpload}
-              searchHistory={[...new Set(searchHistory)]} 
+              searchHistory={searchHistory} 
               isAutoRefresh={isAutoRefresh}
               onToggleAutoRefresh={toggleAutoRefresh}
               currentArticles={articles}

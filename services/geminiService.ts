@@ -5,7 +5,13 @@ import { NewsArticle } from "../types";
 let aiClient: GoogleGenAI | null = null;
 const getAi = (): GoogleGenAI => {
   if (!aiClient) {
-    aiClient = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    // Check if process is defined to avoid crashes in strict browser environments, 
+    // though the environment should inject it.
+    const apiKey = typeof process !== 'undefined' ? process.env.API_KEY : undefined;
+    if (!apiKey) {
+        console.warn("API Key might be missing or process.env is undefined.");
+    }
+    aiClient = new GoogleGenAI({ apiKey: apiKey as string });
   }
   return aiClient;
 };
@@ -42,11 +48,14 @@ const extractJson = (text: string): any => {
   }
   
   // 3. Fallback: Sequential object extraction
-  // This helps when the array is truncated or malformed (e.g. missing comma) or when the model outputs text between objects.
   const objects: any[] = [];
   let startIndex = cleanedText.indexOf('{');
   
-  while (startIndex !== -1) {
+  // Safety limiter
+  let loopCount = 0;
+  
+  while (startIndex !== -1 && loopCount < 50) {
+      loopCount++;
       let balance = 1;
       let endIndex = startIndex + 1;
       let inString = false;
@@ -72,7 +81,6 @@ const extractJson = (text: string): any => {
           try {
               const obj = JSON.parse(jsonStr);
               if (obj && typeof obj === 'object') {
-                   // Heuristic: If it has a title or summary, it's likely a news object
                    objects.push(obj);
               }
           } catch (e) {
@@ -86,7 +94,7 @@ const extractJson = (text: string): any => {
 
   if (objects.length > 0) return objects;
 
-  console.error("Failed to parse JSON from Gemini response. Raw text snippet:", text.substring(0, 200));
+  console.error("Failed to parse JSON from Gemini response.");
   return null;
 };
 
@@ -140,10 +148,10 @@ export const fetchNewsFromAgent = async (topic: string = "latest news"): Promise
     const text = response.text || "";
     const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
     
-    let articles: NewsArticle[] = extractJson(text);
+    let articles: any = extractJson(text);
 
+    // Normalize result to array
     if (!articles || !Array.isArray(articles)) {
-        // Handle object wrapper edge case
         if (articles && (articles as any).news) articles = (articles as any).news;
         else if (articles && (articles as any).articles) articles = (articles as any).articles;
         else {
@@ -161,8 +169,6 @@ export const fetchNewsFromAgent = async (topic: string = "latest news"): Promise
       .filter((uri): uri is string => !!uri);
 
     return (articles as NewsArticle[]).map((article, index) => {
-      // Map links to articles - if we have fewer links than articles, we reuse them or leave empty
-      // Improved logic: Try to distribute links, or just pick unique ones if available
       const linkIndex = index < validLinks.length ? index : -1; 
       const url = linkIndex >= 0 ? validLinks[linkIndex] : undefined;
       
@@ -175,7 +181,6 @@ export const fetchNewsFromAgent = async (topic: string = "latest news"): Promise
 
   } catch (error) {
     console.error("Gemini API Error:", error);
-    // Return empty array or error object instead of throwing to prevent app crash
     return [{
         title: "שגיאה בתקשורת",
         summary: "לא ניתן היה ליצור קשר עם השרת. אנא בדוק את החיבור שלך.",
@@ -217,7 +222,7 @@ export const fetchDeepResearch = async (topic: string): Promise<NewsArticle[]> =
       model: 'gemini-3-pro-preview',
       contents: prompt,
       config: {
-        thinkingConfig: { thinkingBudget: 32768 }, // Max thinking for Pro
+        thinkingConfig: { thinkingBudget: 32768 },
         tools: [{ googleSearch: {} }], 
       },
     });
@@ -228,7 +233,6 @@ export const fetchDeepResearch = async (topic: string): Promise<NewsArticle[]> =
         if (articles && (articles as any).news) articles = (articles as any).news;
         else if (articles && (articles as any).articles) articles = (articles as any).articles;
         else {
-            console.error("Deep Research failed to parse array:", articles);
             return [{
                 title: "ניתוח לא זמין",
                 summary: "לא ניתן היה לעבד את תוצאות המחקר. אנא נסה שוב.",
@@ -277,7 +281,6 @@ export const analyzeImage = async (base64Image: string, mimeType: string): Promi
         const text = response.text || "{}";
         let data: any = extractJson(text);
         
-        // Handle case where extractJson returns an array (from our new logic) instead of single object
         if (Array.isArray(data)) {
             data = data[0];
         }
