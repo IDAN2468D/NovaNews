@@ -1,6 +1,13 @@
 import { GoogleGenAI, Modality } from "@google/genai";
 import { NewsArticle } from "../types";
 
+// Declare process for browser environment to avoid TS errors without @types/node
+declare const process: {
+  env: {
+    API_KEY: string;
+  };
+};
+
 // Lazy load AI client
 let aiClient: GoogleGenAI | null = null;
 const getAi = (): GoogleGenAI => {

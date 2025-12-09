@@ -1,9 +1,12 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { fetchNewsFromAgent, analyzeImage, fetchDeepResearch } from './services/geminiService';
 import { NewsArticle, AgentState, Category } from './types';
 import { NewsCard } from './components/NewsCard';
 import { AgentPanel } from './components/AgentPanel';
-import { Newspaper, Info, Moon, Sun, Sparkles, Eye, EyeOff, ArrowUp } from 'lucide-react';
+import { Newspaper, Info, Moon, Sun, Eye, EyeOff, ArrowUp } from 'lucide-react';
+
+// Configuration
+const AUTO_REFRESH_INTERVAL = 60000; // 60 seconds for "daily" agent feel without waiting too long
 
 const App: React.FC = () => {
   const [articles, setArticles] = useState<NewsArticle[]>([]);
@@ -22,6 +25,9 @@ const App: React.FC = () => {
   const [scrollProgress, setScrollProgress] = useState(0);
   const [isAutoRefresh, setIsAutoRefresh] = useState(true);
   const [currentTopic, setCurrentTopic] = useState("חדשות חמות בישראל");
+  const [nextRefreshTime, setNextRefreshTime] = useState(Date.now() + AUTO_REFRESH_INTERVAL);
+  
+  const refreshTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Load preferences
   useEffect(() => {
@@ -54,6 +60,26 @@ const App: React.FC = () => {
     if (darkMode) document.documentElement.classList.add('dark');
     else document.documentElement.classList.remove('dark');
   }, [darkMode]);
+
+  // Autonomous Agent Loop
+  useEffect(() => {
+    if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
+    
+    if (isAutoRefresh) {
+        setNextRefreshTime(Date.now() + AUTO_REFRESH_INTERVAL);
+        refreshTimerRef.current = setInterval(() => {
+            if (!agentState.isScanning) {
+                console.log("Autonomous Agent: Triggering refresh...");
+                updateNews(currentTopic, false);
+                setNextRefreshTime(Date.now() + AUTO_REFRESH_INTERVAL);
+            }
+        }, AUTO_REFRESH_INTERVAL);
+    }
+
+    return () => {
+        if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
+    };
+  }, [isAutoRefresh, currentTopic, agentState.isScanning]);
 
   const toggleFocusMode = () => {
       setFocusMode(prev => {
@@ -172,6 +198,7 @@ const App: React.FC = () => {
               onToggleAutoRefresh={() => setIsAutoRefresh(!isAutoRefresh)}
               currentArticles={articles}
               onClearHistory={() => setSearchHistory([])}
+              nextRefreshTime={nextRefreshTime}
             />
         )}
 

@@ -1,5 +1,5 @@
-import React, { useState, useRef } from 'react';
-import { Bot, RefreshCw, Sparkles, Search, History, TrendingUp, Clock, Power, Share2, Download, Play, Trash2, Check, Brain, Camera } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Bot, RefreshCw, Sparkles, Search, History, TrendingUp, Clock, Power, Share2, Download, Play, Trash2, Check, Brain, Camera, Radio, Terminal } from 'lucide-react';
 import { AgentState, NewsArticle } from '../types';
 
 interface AgentPanelProps {
@@ -11,6 +11,7 @@ interface AgentPanelProps {
   onToggleAutoRefresh: () => void;
   currentArticles: NewsArticle[];
   onClearHistory: () => void;
+  nextRefreshTime: number;
 }
 
 const TRENDING_TOPICS = [
@@ -21,6 +22,15 @@ const TRENDING_TOPICS = [
   "אפל וגוגל"
 ];
 
+const LOG_MESSAGES = [
+    "סורק מקורות מידע גלובליים...",
+    "מצליב נתונים עם Google Search...",
+    "מנתח סנטימנט בכתבות...",
+    "מסנן חדשות כפולות...",
+    "מייצר תובנות בעברית...",
+    "מעדכן בסיס נתונים בזמן אמת..."
+];
+
 export const AgentPanel: React.FC<AgentPanelProps> = ({ 
   agentState, 
   onUpdate,
@@ -29,13 +39,38 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
   isAutoRefresh,
   onToggleAutoRefresh,
   currentArticles,
-  onClearHistory
+  onClearHistory,
+  nextRefreshTime
 }) => {
   const [customTopic, setCustomTopic] = useState('');
   const [confirmHistoryTopic, setConfirmHistoryTopic] = useState<string | null>(null);
   const [isReadingAll, setIsReadingAll] = useState(false);
   const [isDeepSearch, setIsDeepSearch] = useState(false);
+  const [logIndex, setLogIndex] = useState(0);
+  const [timeLeft, setTimeLeft] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Countdown timer logic
+  useEffect(() => {
+    const timer = setInterval(() => {
+        const now = Date.now();
+        const diff = Math.max(0, Math.ceil((nextRefreshTime - now) / 1000));
+        setTimeLeft(diff);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [nextRefreshTime]);
+
+  // Fake system log animation
+  useEffect(() => {
+    if (agentState.isScanning) {
+        const interval = setInterval(() => {
+            setLogIndex(prev => (prev + 1) % LOG_MESSAGES.length);
+        }, 1500);
+        return () => clearInterval(interval);
+    } else {
+        setLogIndex(0);
+    }
+  }, [agentState.isScanning]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -98,6 +133,12 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     }
   };
 
+  const formatTime = (seconds: number) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  };
+
   return (
     <div className={`relative rounded-3xl overflow-hidden transition-all duration-500 mb-8 border border-white/40 dark:border-slate-700/50 shadow-2xl shadow-blue-500/5 dark:shadow-black/20 ${agentState.isScanning ? 'ring-2 ring-blue-500/30' : ''}`}>
       
@@ -111,36 +152,52 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
 
       <div className="relative z-10 p-6 md:p-8">
         
-        {/* Header Section */}
+        {/* Agent Header Section */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-8">
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-4 w-full md:w-auto">
                 <div className={`p-3 rounded-2xl transition-all duration-500 ${agentState.isScanning ? 'bg-gradient-to-tr from-blue-600 to-indigo-600 shadow-lg shadow-blue-500/40 scale-110' : 'bg-white dark:bg-slate-700 shadow-md border border-gray-100 dark:border-slate-600'}`}>
                     <Bot className={`w-8 h-8 ${agentState.isScanning ? 'text-white animate-pulse' : 'text-blue-600 dark:text-blue-400'}`} />
                 </div>
-                <div>
-                    <h2 className="text-xl font-bold text-gray-900 dark:text-white">
-                        סוכן החדשות החכם
-                    </h2>
-                    <div className="text-sm font-medium">
+                <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                        <h2 className="text-xl font-bold text-gray-900 dark:text-white">
+                            סוכן AI אוטונומי
+                        </h2>
+                        {isAutoRefresh && (
+                            <span className="flex h-2 w-2 relative" title="סוכן פעיל">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                              <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                            </span>
+                        )}
+                    </div>
+                    
+                    <div className="text-sm font-medium h-5 overflow-hidden relative">
                         {agentState.isScanning ? (
-                            <span className="flex items-center gap-2 text-blue-600 dark:text-blue-400">
-                                <span className="relative flex h-2 w-2">
-                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-                                  <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
-                                </span>
-                                {isDeepSearch ? 'מבצע ניתוח עומק...' : 'סורק את הרשת...'}
-                            </span>
+                             <div className="flex items-center gap-2 text-blue-600 dark:text-blue-400 animate-pulse">
+                                <Terminal size={12} />
+                                <span>{LOG_MESSAGES[logIndex]}</span>
+                            </div>
                         ) : (
-                            <span className="text-gray-500 dark:text-gray-400">
-                                {agentState.lastUpdated ? `עודכן: ${agentState.lastUpdated.toLocaleTimeString()}` : 'מוכן לחיפוש חדש'}
-                            </span>
+                            <div className="flex items-center gap-3 text-gray-500 dark:text-gray-400">
+                                {isAutoRefresh ? (
+                                    <span className="flex items-center gap-1.5 text-xs bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 px-2 py-0.5 rounded-full">
+                                        <Clock size={10} />
+                                        סריקה הבאה: {formatTime(timeLeft)}
+                                    </span>
+                                ) : (
+                                    <span className="text-xs">ממתין לפקודה</span>
+                                )}
+                                <span className="text-[10px] opacity-70">
+                                    {agentState.lastUpdated ? `עודכן: ${agentState.lastUpdated.toLocaleTimeString()}` : ''}
+                                </span>
+                            </div>
                         )}
                     </div>
                 </div>
             </div>
 
-            {/* Action Buttons - Refactored for consistency */}
-            <div className="flex flex-wrap items-center gap-2 p-1.5 rounded-xl">
+            {/* Action Buttons */}
+            <div className="flex flex-wrap items-center gap-2 p-1.5 rounded-xl w-full md:w-auto justify-end">
                  <button 
                     onClick={handleReadAll} 
                     disabled={currentArticles.length === 0} 
@@ -181,12 +238,12 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                     onClick={onToggleAutoRefresh}
                     className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all ${
                         isAutoRefresh 
-                        ? 'bg-green-100/80 text-green-700 dark:bg-green-900/30 dark:text-green-300' 
+                        ? 'bg-gradient-to-r from-green-500 to-emerald-600 text-white shadow-lg shadow-green-500/20' 
                         : 'bg-gray-100 text-gray-500 dark:bg-slate-700/50 dark:text-slate-400'
                     }`}
                 >
-                    <Clock size={14} className={isAutoRefresh ? "animate-spin-slow" : ""} />
-                    {isAutoRefresh ? 'Auto ON' : 'Auto OFF'}
+                    <Radio size={14} className={isAutoRefresh ? "animate-pulse" : ""} />
+                    {isAutoRefresh ? 'Auto ON' : 'Manual'}
                 </button>
             </div>
         </div>
