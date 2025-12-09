@@ -1,0 +1,5 @@
+{
+  "name": "NovaNews AI",
+  "description": "A dynamic Hebrew news aggregator powered by Gemini AI. Features a smart agent that fetches real-time updates using Google Search grounding.",
+  "requestFramePermissions": []
+}
