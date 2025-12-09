@@ -12,7 +12,6 @@ export default defineConfig(({ mode }) => {
       port: 3000
     },
     define: {
-      // Define process.env.API_KEY to allow the app to access the key injected by the environment/render
       'process.env.API_KEY': JSON.stringify(env.API_KEY)
     }
   };
