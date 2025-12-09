@@ -1,12 +1,17 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { fetchNewsFromAgent, analyzeImage, fetchDeepResearch } from './services/geminiService';
-import { NewsArticle, AgentState, Category } from './types';
+import { NewsArticle, AgentState, Category, RefreshMode } from './types';
 import { NewsCard } from './components/NewsCard';
 import { AgentPanel } from './components/AgentPanel';
 import { Newspaper, Info, Moon, Sun, Eye, EyeOff, ArrowUp } from 'lucide-react';
 
 // Configuration
-const AUTO_REFRESH_INTERVAL = 60000; // 60 seconds for "daily" agent feel without waiting too long
+const REFRESH_INTERVALS: Record<RefreshMode, number> = {
+    manual: 0,
+    rapid: 120000, // 2 minutes
+    hourly: 3600000, // 1 hour
+    daily: 86400000 // 24 hours
+};
 
 const App: React.FC = () => {
   const [articles, setArticles] = useState<NewsArticle[]>([]);
@@ -23,9 +28,11 @@ const App: React.FC = () => {
   const [focusMode, setFocusMode] = useState(false);
   const [showScrollTop, setShowScrollTop] = useState(false);
   const [scrollProgress, setScrollProgress] = useState(0);
-  const [isAutoRefresh, setIsAutoRefresh] = useState(true);
+  
+  // Agent Autonomy Settings
+  const [refreshMode, setRefreshMode] = useState<RefreshMode>('daily');
   const [currentTopic, setCurrentTopic] = useState("חדשות חמות בישראל");
-  const [nextRefreshTime, setNextRefreshTime] = useState(Date.now() + AUTO_REFRESH_INTERVAL);
+  const [nextRefreshTime, setNextRefreshTime] = useState<number>(0);
   
   const refreshTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -37,6 +44,9 @@ const App: React.FC = () => {
         
         const savedFocus = localStorage.getItem('novaFocusMode');
         if (savedFocus === 'true') setFocusMode(true);
+
+        const savedMode = localStorage.getItem('novaRefreshMode');
+        if (savedMode) setRefreshMode(savedMode as RefreshMode);
     } catch(e) { console.warn("Storage access limited"); }
 
     if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
@@ -65,27 +75,36 @@ const App: React.FC = () => {
   useEffect(() => {
     if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
     
-    if (isAutoRefresh) {
-        setNextRefreshTime(Date.now() + AUTO_REFRESH_INTERVAL);
+    if (refreshMode !== 'manual') {
+        const interval = REFRESH_INTERVALS[refreshMode];
+        setNextRefreshTime(Date.now() + interval);
+        
         refreshTimerRef.current = setInterval(() => {
             if (!agentState.isScanning) {
-                console.log("Autonomous Agent: Triggering refresh...");
+                console.log(`Autonomous Agent (${refreshMode}): Triggering refresh...`);
                 updateNews(currentTopic, false);
-                setNextRefreshTime(Date.now() + AUTO_REFRESH_INTERVAL);
+                setNextRefreshTime(Date.now() + interval);
             }
-        }, AUTO_REFRESH_INTERVAL);
+        }, interval);
+    } else {
+        setNextRefreshTime(0);
     }
 
     return () => {
         if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
     };
-  }, [isAutoRefresh, currentTopic, agentState.isScanning]);
+  }, [refreshMode, currentTopic, agentState.isScanning]);
 
   const toggleFocusMode = () => {
       setFocusMode(prev => {
           try { localStorage.setItem('novaFocusMode', String(!prev)); } catch(e){}
           return !prev;
       });
+  };
+
+  const handleModeChange = (mode: RefreshMode) => {
+      setRefreshMode(mode);
+      try { localStorage.setItem('novaRefreshMode', mode); } catch(e){}
   };
 
   useEffect(() => {
@@ -121,11 +140,11 @@ const App: React.FC = () => {
         : await fetchNewsFromAgent(topic);
       
       setArticles(newArticles);
-      setAgentState({ isScanning: false, lastUpdated: new Date(), statusMessage: "עודכן" });
+      setAgentState({ isScanning: false, lastUpdated: new Date(), statusMessage: "עודכן בהצלחה" });
     } catch (err) {
       console.error(err);
       setError("שגיאה בטעינת הנתונים");
-      setAgentState(prev => ({ ...prev, isScanning: false }));
+      setAgentState(prev => ({ ...prev, isScanning: false, statusMessage: "שגיאה" }));
     }
   }, [focusMode]);
 
@@ -194,8 +213,8 @@ const App: React.FC = () => {
               onUpdate={updateNews} 
               onImageUpload={handleImageUpload}
               searchHistory={searchHistory} 
-              isAutoRefresh={isAutoRefresh}
-              onToggleAutoRefresh={() => setIsAutoRefresh(!isAutoRefresh)}
+              refreshMode={refreshMode}
+              onModeChange={handleModeChange}
               currentArticles={articles}
               onClearHistory={() => setSearchHistory([])}
               nextRefreshTime={nextRefreshTime}

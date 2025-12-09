@@ -1,14 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Bot, RefreshCw, Sparkles, Search, History, TrendingUp, Clock, Power, Share2, Download, Play, Trash2, Check, Brain, Camera, Radio, Terminal } from 'lucide-react';
-import { AgentState, NewsArticle } from '../types';
+import { Bot, RefreshCw, Sparkles, Search, History, TrendingUp, Clock, Power, Share2, Download, Play, Trash2, Check, Brain, Camera, Zap, Calendar, Ban, Terminal } from 'lucide-react';
+import { AgentState, NewsArticle, RefreshMode } from '../types';
 
 interface AgentPanelProps {
   agentState: AgentState;
   onUpdate: (topic: string, isDeepSearch: boolean) => void;
   onImageUpload: (file: File) => void;
   searchHistory: string[];
-  isAutoRefresh: boolean;
-  onToggleAutoRefresh: () => void;
+  refreshMode: RefreshMode;
+  onModeChange: (mode: RefreshMode) => void;
   currentArticles: NewsArticle[];
   onClearHistory: () => void;
   nextRefreshTime: number;
@@ -36,8 +36,8 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
   onUpdate,
   onImageUpload,
   searchHistory,
-  isAutoRefresh,
-  onToggleAutoRefresh,
+  refreshMode,
+  onModeChange,
   currentArticles,
   onClearHistory,
   nextRefreshTime
@@ -52,13 +52,19 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
 
   // Countdown timer logic
   useEffect(() => {
-    const timer = setInterval(() => {
+    if (refreshMode === 'manual') {
+        setTimeLeft(0);
+        return;
+    }
+    const updateTimer = () => {
         const now = Date.now();
         const diff = Math.max(0, Math.ceil((nextRefreshTime - now) / 1000));
         setTimeLeft(diff);
-    }, 1000);
+    };
+    updateTimer(); // Initial call
+    const timer = setInterval(updateTimer, 1000);
     return () => clearInterval(timer);
-  }, [nextRefreshTime]);
+  }, [nextRefreshTime, refreshMode]);
 
   // Fake system log animation
   useEffect(() => {
@@ -134,9 +140,32 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
   };
 
   const formatTime = (seconds: number) => {
+    if (seconds >= 3600) {
+        const h = Math.floor(seconds / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        return `${h}h ${m}m`;
+    }
     const m = Math.floor(seconds / 60);
     const s = seconds % 60;
     return `${m}:${s.toString().padStart(2, '0')}`;
+  };
+
+  const getModeIcon = () => {
+      switch(refreshMode) {
+          case 'rapid': return <Zap size={14} className="text-yellow-500" />;
+          case 'hourly': return <Clock size={14} className="text-blue-500" />;
+          case 'daily': return <Calendar size={14} className="text-purple-500" />;
+          default: return <Ban size={14} className="text-gray-400" />;
+      }
+  };
+
+  const getModeLabel = () => {
+      switch(refreshMode) {
+          case 'rapid': return 'לייב (2ד)';
+          case 'hourly': return 'שעתי';
+          case 'daily': return 'יומי';
+          default: return 'ידני';
+      }
   };
 
   return (
@@ -163,7 +192,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                         <h2 className="text-xl font-bold text-gray-900 dark:text-white">
                             סוכן AI אוטונומי
                         </h2>
-                        {isAutoRefresh && (
+                        {refreshMode !== 'manual' && (
                             <span className="flex h-2 w-2 relative" title="סוכן פעיל">
                               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
                               <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
@@ -179,7 +208,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                             </div>
                         ) : (
                             <div className="flex items-center gap-3 text-gray-500 dark:text-gray-400">
-                                {isAutoRefresh ? (
+                                {refreshMode !== 'manual' ? (
                                     <span className="flex items-center gap-1.5 text-xs bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 px-2 py-0.5 rounded-full">
                                         <Clock size={10} />
                                         סריקה הבאה: {formatTime(timeLeft)}
@@ -234,17 +263,26 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
 
                 <div className="w-px h-6 bg-gray-300 dark:bg-slate-600 mx-1"></div>
 
-                <button
-                    onClick={onToggleAutoRefresh}
-                    className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all ${
-                        isAutoRefresh 
-                        ? 'bg-gradient-to-r from-green-500 to-emerald-600 text-white shadow-lg shadow-green-500/20' 
-                        : 'bg-gray-100 text-gray-500 dark:bg-slate-700/50 dark:text-slate-400'
-                    }`}
-                >
-                    <Radio size={14} className={isAutoRefresh ? "animate-pulse" : ""} />
-                    {isAutoRefresh ? 'Auto ON' : 'Manual'}
-                </button>
+                {/* Mode Selector */}
+                <div className="flex items-center bg-gray-100 dark:bg-slate-700/50 rounded-lg p-1">
+                    {(['manual', 'rapid', 'hourly', 'daily'] as RefreshMode[]).map((mode) => (
+                        <button
+                            key={mode}
+                            onClick={() => onModeChange(mode)}
+                            className={`p-1.5 rounded-md transition-all ${
+                                refreshMode === mode 
+                                ? 'bg-white dark:bg-slate-600 shadow-sm text-blue-600 dark:text-blue-400 scale-105' 
+                                : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'
+                            }`}
+                            title={getModeLabel()}
+                        >
+                            {mode === 'manual' && <Ban size={14} />}
+                            {mode === 'rapid' && <Zap size={14} />}
+                            {mode === 'hourly' && <Clock size={14} />}
+                            {mode === 'daily' && <Calendar size={14} />}
+                        </button>
+                    ))}
+                </div>
             </div>
         </div>
 

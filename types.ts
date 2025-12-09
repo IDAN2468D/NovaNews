@@ -1,5 +1,7 @@
 export type Category = 'General' | 'Politics' | 'Technology' | 'Sports' | 'Economy' | 'Health' | 'Entertainment' | 'Science' | 'World';
 
+export type RefreshMode = 'manual' | 'rapid' | 'hourly' | 'daily';
+
 export interface NewsArticle {
   title: string;
   summary: string;
