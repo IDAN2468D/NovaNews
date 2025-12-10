@@ -9,7 +9,8 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     server: {
       host: true,
-      port: 3000
+      port: 3000,
+      allowedHosts: true
     },
     define: {
       // Safely access process.env.API_KEY or fallback to empty object to prevent TS errors
